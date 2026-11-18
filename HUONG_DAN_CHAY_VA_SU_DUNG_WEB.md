@@ -1,126 +1,87 @@
-# HƯỚNG DẪN CHẠY HỆ THỐNG VÀ SỬ DỤNG WEB DASHBOARD
+# Hướng dẫn chạy và sử dụng Web
 
-Tài liệu này hướng dẫn chi tiết cách khởi chạy đồ án **Kho dữ liệu giáo dục VKU** và cách thao tác tương tác trên **Web Dashboard** (dùng khi kiểm tra bài hoặc khi thuyết trình / demo trước giảng viên).
+## Chuẩn bị Windows
 
----
-
-## PHẦN 1: CÁCH MỞ VÀ CHẠY TRANG WEB DASHBOARD
-
-Bạn có **2 cách** để mở trang Web Dashboard (cả 2 cách đều đã có sẵn toàn bộ dữ liệu 224.778 dòng kết quả học tập và 7.964 hồ sơ tuyển sinh):
-
-### Cách 1: Chạy Web Server kết nối trực tiếp MariaDB (Khuyên dùng khi Demo)
-Chế độ này kết nối trực tiếp tới 2 database `edu_dw` và `edu_source` trong MariaDB (XAMPP), cho phép bạn lọc dữ liệu theo thời gian thực, bấm nút đổi ngành sinh viên (SCD2) trực tiếp vào CSDL và gõ câu lệnh SQL tuỳ ý.
-
-1. Mở **XAMPP Control Panel** → đảm bảo dòng **MySQL** đang ở trạng thái **Running (màu xanh)**.
-2. Mở thư mục `d:\Nam_Hoc\Nam_3\Kho du lieu\Bai_tap_lon\Code`, **nhấp đúp chuột** vào file:
-   👉 [`chay_web.bat`](file:///d:/Nam_Hoc/Nam_3/Kho%20du%20lieu/Bai_tap_lon/Code/chay_web.bat)
-   *(Hoặc mở Terminal tại thư mục `Code` và chạy lệnh: `.venv\Scripts\python.exe web_app.py`)*
-3. Trình duyệt sẽ tự động mở địa chỉ: **http://localhost:8050**
-
-> [!NOTE]
-> Hệ thống Web đã được tái cấu trúc hoàn chỉnh theo chuẩn kiến trúc **MVC (Model - View - Controller)** trong thư mục `mvc/`:
-> - **Model (`mvc/models/`)**: Quản lý truy vấn dữ liệu Kho `edu_dw` và CSDL nguồn `edu_source` (`olap_model.py`, `scd2_model.py`, `etl_model.py`, `sql_model.py`).
-> - **View (`mvc/views/`, `web/`)**: Định dạng giao diện Web (`web/index.html`) và phản hồi (`view.py`).
-> - **Controller (`mvc/controllers/`)**: Tiếp nhận yêu cầu, kiểm tra dữ liệu và phân luồng nghiệp vụ (`router.py`, `olap_controller.py`, `scd2_controller.py`, `etl_controller.py`, `sql_controller.py`).
-
----
-
-### Cách 2: Mở trực tiếp file HTML độc lập (Không cần bật Server hay XAMPP)
-Nếu bạn mang sang máy khác chưa cài Python/XAMPP hoặc gửi file cho các bạn trong nhóm xem nhanh:
-
-- Chỉ cần **nhấp đúp chuột** vào file:
-  👉 [`web/dashboard_standalone.html`](file:///d:/Nam_Hoc/Nam_3/Kho%20du%20lieu/Bai_tap_lon/Code/web/dashboard_standalone.html) (hoặc [`web/index.html`](file:///d:/Nam_Hoc/Nam_3/Kho%20du%20lieu/Bai_tap_lon/Code/web/index.html))
-- File này đã nhúng sẵn toàn bộ số liệu thống kê, biểu đồ OLAP, lịch sử SCD2, log ETL và 10 Test Cases nên hoạt động ngay trên mọi trình duyệt (Chrome, Edge, Firefox).
-
----
-
-## PHẦN 2: HƯỚNG DẪN SỬ DỤNG 4 TAB TRÊN TRANG WEB
-
-Giao diện trang Web được chia thành **4 Tab chức năng** trên thanh menu góc trên bên phải, bám sát toàn bộ yêu cầu trong Đề cương:
-
----
-
-### TAB 1: `1. Dashboard 5 Câu hỏi OLAP`
-Tab này dùng để trả lời trực quan **5 câu hỏi quản lý đào tạo** ở mục 4.2 của Đề cương.
-
-1. **Thanh bộ lọc đa chiều (Slice / Dice / Roll-up / Drill-down) ở trên cùng:**
-   - Chọn **Khoa** (ví dụ `KHMT – Khoa Khoa học máy tính`), **Ngành đào tạo** (ví dụ `IT – Công nghệ thông tin`), **Năm học** (`2019-2020` → `2025-2026`), hoặc **Vùng miền**.
-   - Ngay khi bạn chọn, **6 thẻ KPI** và **6 biểu đồ** bên dưới sẽ tự động tính toán và vẽ lại theo đúng lát cắt (Slice/Dice) bạn chọn.
-   - Bấm nút **"Đặt lại bộ lọc"** để quay về toàn trường.
-2. **6 Thẻ chỉ số KPI tổng quan:**
-   - Hiển thị: Tổng lượt kết quả học tập (`224.778`), Số sinh viên (`4.948`), Điểm trung bình hệ 10 & hệ 4 (`7.18 / 2.79`), Tỷ lệ Đạt/Rớt (`98.76% / 1.24%`), Hồ sơ tuyển sinh (`7.964`), và Số bản ghi lịch sử SCD2 (`149`) cùng số bản ghi lỗi đã lọc (`2.537`).
-3. **6 Biểu đồ phân tích OLAP:**
-   - **Câu hỏi 1A (Top 15 môn có tỷ lệ rớt cao bất thường):** Các môn vượt ngưỡng 5% được tô **màu đỏ** nổi bật (*Toán cao cấp A1: 10.23%*, *Kinh tế lượng: 7.30%*, *Xử lý tín hiệu số: 6.59%*, *Lập trình Java: 6.47%*).
-   - **Câu hỏi 1B (Drill-down theo Năm học → Học kỳ):** Biểu đồ đường kép thể hiện diễn biến Điểm trung bình và Tỷ lệ rớt qua từng học kỳ.
-   - **Câu hỏi 2 (Dice Ngành × Phương thức xét tuyển):** Biểu đồ cột nhóm so sánh điểm trung bình của sinh viên trúng tuyển theo 3 phương thức (*Học bạ THPT*, *Thi tốt nghiệp THPT*, *Đánh giá năng lực*) ở từng ngành.
-   - **Câu hỏi 3 (Slice Học kỳ 1 – Biểu đồ phân tán Scatter):** Trục ngang là *Điểm xét tuyển quy đổi thang 30*, trục dọc là *GPA Học kỳ 1*. Các đám mây điểm dốc lên từ trái sang phải chứng minh điểm đầu vào có tương quan thuận rõ rệt với kết quả học kỳ đầu.
-   - **Câu hỏi 4 (Roll-up theo Năm tuyển sinh 2019–2022):** Biểu đồ đường cho thấy các ngành tăng trưởng mạnh (*Công nghệ thông tin, Khoa học máy tính, Marketing số, Thương mại điện tử*) và các ngành giảm nhẹ (*Quản trị kinh doanh, Điện tử viễn thông*).
-   - **Câu hỏi 5 (Slice theo Tỉnh/Thành phố):** So sánh tỷ lệ sinh viên đạt loại Giỏi/Xuất sắc giữa 18 tỉnh/thành phố.
-
----
-
-### TAB 2: `2. Tương tác SCD Loại 2 (Đổi ngành)`
-Tab này dùng để **minh họa trực tiếp Slowly Changing Dimension loại 2 (`SCD2`)** khi giảng viên hỏi *"Kho dữ liệu xử lý sinh viên đổi ngành như thế nào?"*.
-
-1. **Tra cứu sinh viên đã đổi ngành:**
-   - Chọn một sinh viên trong danh sách thả xuống **"Chọn nhanh sinh viên đã có lịch sử đổi ngành"** (mặc định đang chọn `19IT001 – Phúc Văn Trần`), hoặc gõ mã sinh viên bất kỳ (ví dụ `20IT002`) vào ô tìm kiếm rồi bấm **Tìm**.
-2. **Quan sát 2 bảng kết quả bên phải:**
-   - **Bảng trên (`dim_sinh_vien`):** Hiển thị các dòng phiên bản lịch sử của sinh viên đó:
-     - Dòng cũ (`sinh_vien_key = 871`, ngành `IT`): đã được đóng bằng `ngay_het_han = 2021-08-19` và cờ `is_current = 0 (Lịch sử)`.
-     - Dòng mới (`sinh_vien_key = 8192`, ngành `SE`): có hiệu lực từ `2021-08-20`, `ngay_het_han = 9999-12-31` và cờ `is_current = 1 (Hiện tại)`.
-   - **Bảng dưới (`fact_ket_qua_hoc_tap`):** Hiển thị điểm trung bình từng học kỳ của sinh viên đó — bạn chỉ cho giảng viên thấy các học kỳ năm `2019-2020` và `2020-2021` vẫn gắn với `sinh_vien_key = 871` (ngành **Công nghệ thông tin**), còn từ `2021-2022` trở đi mới gắn với `sinh_vien_key = 8192` (ngành **Kỹ thuật phần mềm**).
-3. **Demo đổi ngành trực tiếp ngay trên Web:**
-   - Ở khung bên trái, nhập **Mã sinh viên** (ví dụ `19CS001`), chọn **Ngày hiệu lực chuyển ngành** (ví dụ `2021-08-20`), chọn **Ngành chuyển đến** (ví dụ `IT – Công nghệ thông tin`).
-   - Bấm nút **"Cập nhật Đổi ngành ở Nguồn & Chạy SCD2 vào Kho"**.
-   - Hệ thống sẽ tự động cập nhật bảng `SinhVien` + `LichSuChuyenNganh` ở `edu_source`, chạy Stored Procedure `sp_scd2_dim_sinh_vien` trong `edu_dw`, và làm mới ngay bảng phiên bản lịch sử bên phải!
-
----
-
-### TAB 3: `3. ETL Log, Làm sạch & 10 Test Cases`
-Tab này dùng để chứng minh **Quy trình ETL làm sạch dữ liệu lỗi** và **Tiêu chí đánh giá mục 4.3 của Đề cương**:
-
-1. **Bảng 10 Test Cases Kiểm thử Chất lượng Dữ liệu:**
-   - Hiển thị đầy đủ 10 mã kiểm thử (`TC01` → `TC10`) cùng kết quả kỳ vọng, kết quả thực tế và nhãn `PASS` màu xanh.
-   - Có nút **"Chạy lại 10 Test Cases"** để kiểm tra trực tiếp trước mặt giảng viên.
-2. **Biểu đồ & Bảng So sánh Hiệu năng (Benchmark OLTP 3NF vs DW Star Schema):**
-   - Thể hiện trực quan thời gian chạy truy vấn trên Kho dữ liệu Star Schema (cột màu xanh) nhanh gấp **1,56x – 2,14x** so với truy vấn trực tiếp trên CSDL nguồn 3NF (cột màu đỏ).
-3. **Bảng so sánh Trước & Sau khi làm sạch (`etl_data_quality`):**
-   - Liệt kê từng loại lỗi chủ đích đã phát hiện ở nguồn (`905` dòng trùng, `905` dòng thiếu điểm, `679` dòng ngoài thang `0–10`, `671` dòng lệch điểm tổng kết, `590` họ tên lỗi, `292` tỉnh/thành lỗi...) đưa về **`0` lỗi** sau ETL.
-4. **Bảng Nhật ký ETL (`etl_log`):**
-   - Hiển thị từng bước `EXTRACT` → `TRANSFORM` → `LOAD` với số dòng đọc, số dòng nạp và số dòng bị loại.
-
----
-
-### TAB 4: `4. Truy vấn SQL Trực tiếp`
-Tab này là công cụ **SQL Playground** ngay trên trình duyệt:
-
-1. Chọn CSDL cần truy vấn (`edu_dw` hoặc `edu_source`).
-2. Chọn nhanh một trong **7 câu truy vấn mẫu** ở thanh thả xuống (Câu hỏi 1 đến Câu hỏi 5 có dùng `WITH ROLLUP`, `CUBE`, truy vấn kiểm tra SCD2, hoặc xem 50 bản ghi lỗi bị loại trong `etl_reject`).
-3. Hoặc tự gõ bất kỳ câu lệnh `SELECT ...` nào vào ô soạn thảo rồi bấm **"Chạy Truy Vấn (Execute SQL)"** — bảng kết quả và thời gian chạy (ms) sẽ hiện ngay bên dưới.
-
----
-
-## PHẦN 3: CÁC LỆNH TERMINAL DỰ PHÒNG (KHI CẦN CHẠY LẠI TỪ ĐẦU)
-
-Nếu muốn chạy lại từng phần bằng dòng lệnh trong thư mục `d:\Nam_Hoc\Nam_3\Kho du lieu\Bai_tap_lon\Code`:
+Cần Python, MariaDB/MySQL đang lắng nghe và quyền tạo `phone_source`, `phone_dw`. Với XAMPP, mở Control Panel và Start MySQL. Không mặc định mật khẩu rỗng; dùng thông tin kết nối của máy. Mở PowerShell ở thư mục chứa `run_all.py`:
 
 ```powershell
-# 1. Chạy lại toàn bộ từ A đến Z (Kiểm tra kết nối -> ETL -> SCD2 -> Test -> Benchmark)
-.venv\Scripts\python.exe run_all.py
-
-# 2. Sinh lại toàn bộ dữ liệu giả lập từ đầu vào edu_source (nếu muốn làm mới hoàn toàn)
-.venv\Scripts\python.exe run_all.py --force-generate
-
-# 3. Chỉ chạy quy trình ETL
-.venv\Scripts\python.exe -m etl.pipeline
-
-# 4. Chỉ chạy kịch bản demo đổi ngành SCD2 trên terminal
-.venv\Scripts\python.exe -m etl.demo_scd2
-
-# 5. Chỉ chạy 10 Test Cases kiểm thử chất lượng dữ liệu
-.venv\Scripts\python.exe -m tests.run_dq_tests
-
-# 6. Khởi động Web Dashboard tại http://localhost:8050
-.venv\Scripts\python.exe web_app.py
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+.\.venv\Scripts\python.exe -m common.check_connection
+.\.venv\Scripts\python.exe run_all.py
+.\.venv\Scripts\python.exe web_app.py
 ```
 
+Giữ `.env` hiện có và mật khẩu; chỉ sửa host/port/user/password khi cần. Các tên database cũ trong `.env` được ứng dụng thay bằng `phone_source`, `phone_dw`. Không đổi tên hoặc xóa database cũ để chạy dự án.
+
+Truy cập http://localhost:8050 bằng Chrome/Edge/Firefox. Giữ cửa sổ server mở; Ctrl+C để dừng. File HTML không có server không thay thế được kết nối dữ liệu thật; các bản snapshot giáo dục cũ không phải dashboard hiện hành.
+
+## Chạy từng bước và chạy lại an toàn
+
+`run_all.py` nhận mode `init`, `generate`, `etl`, `scd2`, `tests`, `olap`, `benchmark`, `all` (mặc định). `all` tái sử dụng nguồn đã có từ 50.000 đơn trở lên, mặc định sinh 60.000 đơn với seed 2026 khi cần. Generator từ chối ghi lại khi nguồn đã có đơn để giữ dữ liệu hiện hữu; nếu nguồn có dưới ngưỡng, cần xem trạng thái thay vì mặc định cho rằng lệnh đã bổ sung đủ đơn.
+
+```powershell
+.\.venv\Scripts\python.exe run_all.py init
+.\.venv\Scripts\python.exe run_all.py generate --orders 60000 --seed 2026
+.\.venv\Scripts\python.exe run_all.py etl
+.\.venv\Scripts\python.exe run_all.py scd2
+.\.venv\Scripts\python.exe run_all.py tests
+.\.venv\Scripts\python.exe run_all.py olap
+.\.venv\Scripts\python.exe run_all.py benchmark
+# Kiểm chứng chạy lặp trên nguồn không thay đổi:
+.\.venv\Scripts\python.exe run_all.py etl
+```
+
+Ưu tiên `all` hoặc `etl` cho lần chạy lại thường ngày. `--orders` tối thiểu 50.000. Trong đợt tiếp tục hiện tại, **không reset**: giữ nguyên dữ liệu và thay đổi SCD2. CLI vẫn có cơ chế reset bảo vệ bằng hai cờ `--reset` và `--confirm-reset phone-sales`, chỉ cho phép hai tên database điện thoại cố định; đây không phải bước vận hành được yêu cầu trong đợt này. Không có cờ `--force-generate`.
+
+## IntelliJ IDEA
+
+1. Open thư mục dự án; chọn Python interpreter là `.venv\Scripts\python.exe` trong cấu hình Python/plugin tương ứng. Nếu chưa có Python runner, dùng Terminal tích hợp với các lệnh trên.
+2. Run Configuration cho `run_all.py`: working directory là thư mục gốc, parameters `all`. Chạy và đọc exit code, các lỗi kết nối hoặc kiểm thử.
+3. Tạo configuration riêng cho `web_app.py`, cùng interpreter và working directory. Chạy sau pipeline, mở localhost:8050.
+4. Để thử ETL lặp, tạo configuration `run_all.py` parameters `etl`; không thêm reset vào cấu hình mặc định.
+
+## Thao tác trên Web
+
+- Dashboard: chọn thời gian bán, thương hiệu/sản phẩm, cửa hàng/khu vực và kênh theo bộ lọc hiện có. Đối chiếu KPI và cả sáu biểu đồ sau mỗi thay đổi; đặt lại bộ lọc để về toàn bộ dữ liệu. Lát cắt trống phải hiển thị không có dữ liệu.
+- SCD2: tìm mã cửa hàng có thật, xem lịch sử; chọn khu vực mới và ngày hiệu lực hợp lệ rồi thực hiện thay đổi. Kiểm tra phiên bản cũ kết thúc đúng ngày phiên bản mới bắt đầu. Giao dịch bán trước/sau mốc thuộc đúng khu vực. Lặp cùng khu vực trả no-op; khu vực khác tại đúng mốc đã có bị từ chối, cần chọn ngày khác.
+- ETL/kiểm thử: chạy ETL rồi đọc run_id, log, DQ và reject; chạy kiểm thử thật và đọc từng PASS/FAIL. Không xem số lượng lỗi giảm là bằng chứng đủ nếu chưa đối soát.
+- SQL: thử SELECT trên bảng/view kho cho phép; kết quả bị giới hạn. Đây không phải console quản trị; DDL/DML, nhiều câu lệnh và tham chiếu database khác bị từ chối.
+
+Bộ lọc ngày là **ngày bán gốc**, không phải ngày hoàn tiền. Trả hàng năm 2027 cho đơn 2026 vẫn giảm doanh thu cohort 2026. [Mapping](docs/mapping.md) có công thức chi tiết.
+
+## Kiểm thử, benchmark và kết quả
+
+`tests/run_dq_tests.py` thực thi 10 ca thật:
+
+| Ca | Nội dung |
+|---|---|
+| TC01 | Đối soát dòng nguồn đã xử lý với nạp và loại |
+| TC02 | Không trùng khóa nghiệp vụ hai fact |
+| TC03 | Giá/số lượng hợp lệ, giảm giá không vượt giá trị bán |
+| TC04 | Không có FK mồ côi |
+| TC05 | Công thức doanh thu bán và thuần |
+| TC06 | Công thức giá vốn thuần và lợi nhuận |
+| TC07 | Lượng trả, tiền hoàn, giá vốn hoàn không vượt dòng bán |
+| TC08 | Khoảng SCD2, một current và khóa fact đúng lịch sử |
+| TC09 | Chạy lại ETL thật, so toàn bộ khóa/giá trị bằng snapshot/hash |
+| TC10 | Năm câu hỏi quản lý và năm grain benchmark được đối soát nguồn/kho |
+
+Kết quả: `output/phone_sales/test_cases_result.json` và `.csv`. Benchmark chạy truy vấn tương đương trên hai database, warm-up, đo nhiều lần gồm fetch kết quả và so equality. Đọc `benchmark_result.csv`, `olap_reconciliation.json` cùng các file `olap_business_Q1_brand_model.csv`, `olap_business_Q2_year_quarter_month.csv`, `olap_business_Q3_brand_channel.csv`, `olap_business_Q4_sku_month_price_quantity.csv`, `olap_business_Q5_region_store.csv` và `benchmark_query_Q1_month.csv`, `benchmark_query_Q2_sku.csv`, `benchmark_query_Q3_store.csv`, `benchmark_query_Q4_channel.csv`, `benchmark_query_Q5_promotion.csv` trong thư mục này. Không mặc định DW nhanh hơn: tỷ lệ thời gian có thể nhỏ hơn 1, tùy cache, dữ liệu, index và máy.
+
+## Xử lý lỗi thường gặp
+
+- Không kết nối: kiểm tra MySQL đã chạy, host/port và credentials; không ghi mật khẩu ra log.
+- Thiếu bảng: chạy `run_all.py init`, sau đó `all`; không dùng reset như bước sửa lỗi đầu tiên.
+- Cổng 8050 đã dùng: dừng server cũ do mình chạy rồi khởi động lại; không mở nhiều server cùng cổng.
+- Web báo lỗi hoặc biểu đồ trống: xem thông báo API, terminal server, bộ lọc và kết quả ETL; không dùng dữ liệu cũ để che lỗi.
+- Kiểm thử FAIL/benchmark không khớp: giữ báo cáo và run_id, sửa nguyên nhân rồi chạy lại. Không đổi FAIL thành PASS trong tệp báo cáo.
+
+## Sinh CSV khi chưa có database
+
+```powershell
+.\.venv\Scripts\python.exe -m generator.generate_data --csv-only --orders 60000 --seed 2026
+```
+
+Lệnh này chỉ sinh dữ liệu dưới `data/phone_sales/`, gồm manifest mới; không chứng minh ETL, SQL hay Web đã chạy được. Log ETL mới xuất dưới dạng `etl_log_latest.json`, `etl_data_quality_latest.json`, `etl_reject_latest.json` trong `output/phone_sales/`. Benchmark mặc định một warm-up không tính giờ và 5 lần đo cho mỗi truy vấn/mỗi hệ; `source_over_dw` là median nguồn chia median kho, lớn hơn 1 mới có nghĩa kho nhanh hơn trong phép đo đó.

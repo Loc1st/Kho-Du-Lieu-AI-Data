@@ -1,205 +1,128 @@
-"""Bộ kiểm thử chất lượng dữ liệu (Data Quality & Reconciliation Tests) cho Kho dữ liệu.
-
-Kiểm tra đầy đủ các tiêu chí ở mục 4.3 của Đề cương:
-  - Quy mô bảng fact_ket_qua_hoc_tap >= 100.000 dòng.
-  - Đối soát số dòng: Số dòng nguồn = Số dòng nạp vào Fact + Số dòng bị loại trong etl_reject.
-  - Đối soát số lượng sinh viên giữa nguồn và dim_sinh_vien (is_current = 1).
-  - Không có khóa ngoại mồ côi (orphan foreign keys) ở cả 2 bảng fact.
-  - Không có điểm NULL hoặc ngoài thang [0, 10] trong fact_ket_qua_hoc_tap, hay ngoài thang [0, 30]
-    đối với diem_quy_doi_30 trong fact_tuyen_sinh.
-  - Công thức điểm tổng kết (0.4*QT + 0.6*Thi) khớp 100%.
-  - Dữ liệu danh mục (giới tính, tỉnh/thành, tên ngành) đã chuẩn hóa 100%.
-  - SCD2: mọi sinh viên có đúng 1 dòng is_current = 1, khoảng hiệu lực [ngay_hieu_luc, ngay_het_han]
-    không chồng lấn.
-
-Xuất bảng kết quả test case ra: output/test_cases_result.csv
-"""
+"""Database-backed phone warehouse quality checks; failures remain visible in JSON/CSV."""
 from __future__ import annotations
-
-import pandas as pd
+import csv
+import hashlib
+import json
+from pathlib import Path
 from sqlalchemy import text
+from common.db import get_engine
 
-from common import reference as ref
-from common.db import DW_DB, OUTPUT_DIR, SOURCE_DB, get_engine
+OUTPUT = Path(__file__).resolve().parents[1] / 'output' / 'phone_sales'
 
+def _scalar(sql):
+    with get_engine('phone_dw').connect() as conn:
+        return int(conn.execute(text(sql)).scalar() or 0)
+
+def _zero(sql):
+    count = _scalar(sql)
+    return count == 0, {'violations': count}
+
+def _snapshot():
+    tables = ['dim_thoi_gian','dim_san_pham','dim_cua_hang','dim_khach_hang','dim_kenh_ban','dim_khuyen_mai','fact_ban_hang','fact_tra_hang']
+    result = {}
+    with get_engine('phone_dw').connect() as conn:
+        for table in tables:
+            rows = conn.execute(text(f'SELECT * FROM {table} ORDER BY 1')).fetchall()
+            digest = hashlib.sha256()
+            for row in rows:
+                digest.update(json.dumps(list(row), default=str, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+                digest.update(b'\n')
+            result[table] = {'rows': len(rows), 'sha256': digest.hexdigest()}
+    return result
+
+def _rerun():
+    from etl.pipeline import run_etl
+    before = _snapshot()
+    run_id = run_etl(init_dw=False)
+    after = _snapshot()
+    return before == after, {'run_id': str(run_id), 'before': before, 'after': after}
+
+def _foreign_keys():
+    checks = []
+    for dim, key in [('dim_thoi_gian','thoi_gian_key'),('dim_san_pham','san_pham_key'),('dim_cua_hang','cua_hang_key'),('dim_khach_hang','khach_hang_key'),('dim_kenh_ban','kenh_ban_key'),('dim_khuyen_mai','khuyen_mai_key')]:
+        checks.append(f'(SELECT COUNT(*) FROM fact_ban_hang f LEFT JOIN {dim} d ON f.{key}=d.{key} WHERE d.{key} IS NULL)')
+    checks.extend(['(SELECT COUNT(*) FROM fact_tra_hang r LEFT JOIN fact_ban_hang f ON r.ban_hang_key=f.ban_hang_key WHERE f.ban_hang_key IS NULL)', '(SELECT COUNT(*) FROM fact_tra_hang r LEFT JOIN dim_thoi_gian d ON r.thoi_gian_key=d.thoi_gian_key WHERE d.thoi_gian_key IS NULL)'])
+    return _zero('SELECT ' + '+'.join(checks))
+
+def _scd():
+    sql = '''SELECT
+    (SELECT COUNT(*) FROM (SELECT ma_cua_hang FROM dim_cua_hang GROUP BY ma_cua_hang HAVING SUM(is_current)<>1) x)+
+    (SELECT COUNT(*) FROM dim_cua_hang WHERE ngay_hieu_luc>=ngay_het_han OR is_current<>(ngay_het_han='9999-12-31'))+
+    (SELECT COUNT(*) FROM dim_cua_hang a JOIN dim_cua_hang b ON a.ma_cua_hang=b.ma_cua_hang AND a.cua_hang_key<b.cua_hang_key AND a.ngay_hieu_luc<b.ngay_het_han AND b.ngay_hieu_luc<a.ngay_het_han)+
+    (SELECT COUNT(*) FROM fact_ban_hang f JOIN dim_cua_hang d ON f.cua_hang_key=d.cua_hang_key JOIN dim_thoi_gian t ON f.thoi_gian_key=t.thoi_gian_key WHERE t.ngay<d.ngay_hieu_luc OR t.ngay>=d.ngay_het_han)'''
+    ok, detail = _zero(sql)
+    detail['historical_versions'] = _scalar('SELECT COUNT(*) FROM dim_cua_hang WHERE is_current=0')
+    return ok and detail['historical_versions'] > 0, detail
+
+def _olap():
+    from analysis.benchmark import reconcile_queries, export_olap
+    rows = reconcile_queries(export=False)
+    business = export_olap()
+    return all(r['equal'] for r in rows + business) and len(rows) == len(business) == 5, {'benchmark_queries': rows, 'business_questions': business}
+
+def run_tests() -> list[dict]:
+    cases = [
+        ('TC01 source processed accounting', _accounting),
+        ('TC02 natural keys deduplicated', lambda: _zero('SELECT (SELECT COUNT(*)-COUNT(DISTINCT ma_chi_tiet) FROM fact_ban_hang)+(SELECT COUNT(*)-COUNT(DISTINCT ma_chi_tiet_tra) FROM fact_tra_hang)')),
+        ('TC03 positive price and quantity', lambda: _zero('SELECT COUNT(*) FROM fact_ban_hang WHERE so_luong IS NULL OR so_luong<=0 OR don_gia IS NULL OR don_gia<=0 OR giam_gia<0 OR giam_gia>so_luong*don_gia OR gia_von<0')),
+        ('TC04 fact foreign keys', _foreign_keys),
+        ('TC05 revenue arithmetic', lambda: _zero('SELECT COUNT(*) FROM vw_sales_net WHERE doanh_thu<>ROUND(so_luong*don_gia-giam_gia,2) OR doanh_thu_thuan<>doanh_thu-tien_hoan')),
+        ('TC06 profit and net cost arithmetic', lambda: _zero('SELECT COUNT(*) FROM vw_sales_net WHERE gia_von_thuan<>gia_von-gia_von_hoan OR loi_nhuan<>doanh_thu_thuan-gia_von_thuan')),
+        ('TC07 cumulative returns bounded', lambda: _zero('SELECT (SELECT COUNT(*) FROM vw_sales_net WHERE so_luong_tra>so_luong OR tien_hoan>doanh_thu OR gia_von_hoan>gia_von)+(SELECT COUNT(*) FROM fact_tra_hang WHERE so_luong_tra<=0 OR tien_hoan<0 OR gia_von_hoan<0)')),
+        ('TC08 SCD2 intervals and historical keys', _scd),
+        ('TC09 actual ETL rerun preserves every key/value', _rerun),
+        ('TC10 five OLAP source/DW reconciliations', _olap),
+    ]
+    results = []
+    for name, check in cases:
+        try:
+            passed, detail = check()
+            results.append({'name': name, 'status': 'PASS' if passed else 'FAIL', 'detail': detail})
+        except Exception as exc:
+            results.append({'name': name, 'status': 'FAIL', 'detail': {'error': str(exc)}})
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    (OUTPUT/'test_cases_result.json').write_text(json.dumps(results, ensure_ascii=False, indent=2, default=str), encoding='utf-8')
+    with (OUTPUT/'test_cases_result.csv').open('w', newline='', encoding='utf-8-sig') as file:
+        writer = csv.DictWriter(file, fieldnames=['name','status','detail'])
+        writer.writeheader()
+        writer.writerows({**r, 'detail': json.dumps(r['detail'], ensure_ascii=False, default=str)} for r in results)
+    return results
+
+def _accounting():
+    with get_engine('phone_source').connect() as src, get_engine('phone_dw').connect() as dw:
+        def count(conn, sql, params=None):
+            return int(conn.execute(text(sql), params or {}).scalar() or 0)
+        source_orders = count(src, 'SELECT COUNT(*) FROM don_hang')
+        completed = count(src, "SELECT COUNT(*) FROM chi_tiet_don_hang c JOIN don_hang d ON c.ma_don_hang=d.ma_don_hang WHERE d.trang_thai<>'CANCELLED'")
+        cancelled = count(src, "SELECT COUNT(*) FROM chi_tiet_don_hang c JOIN don_hang d ON c.ma_don_hang=d.ma_don_hang WHERE d.trang_thai='CANCELLED'")
+        returns = count(src, 'SELECT COUNT(*) FROM chi_tiet_tra_hang')
+        raw = count(src, 'SELECT COUNT(*) FROM raw_import_error')
+        sales_fact = count(dw, 'SELECT COUNT(*) FROM fact_ban_hang')
+        return_fact = count(dw, 'SELECT COUNT(*) FROM fact_tra_hang')
+        latest = dw.execute(text("SELECT run_id FROM etl_log WHERE status='SUCCESS' ORDER BY log_id DESC LIMIT 1")).scalar()
+        if not latest:
+            return False, {'error': 'No completed ETL audit available'}
+        rejects = count(dw, 'SELECT COUNT(*) FROM etl_reject WHERE run_id=:r', {'r': latest})
+        audit = [dict(row) for row in dw.execute(text('SELECT bang,so_dong_doc,so_dong_nap,so_dong_loai FROM etl_log WHERE run_id=:r'), {'r': latest}).mappings()]
+        balances = all(row['so_dong_doc'] == row['so_dong_nap'] + row['so_dong_loai'] for row in audit)
+        tracked = {row['bang']: row for row in audit}
+        expected_reads = {'fact_ban_hang': completed+cancelled, 'fact_tra_hang': returns, 'raw_import_error': raw}
+        reads_match = all(table in tracked and tracked[table]['so_dong_doc'] == n for table,n in expected_reads.items())
+        detail = {'run_id': latest, 'source_orders': source_orders, 'completed_lines': completed,
+                  'cancelled_lines': cancelled, 'source_returns': returns, 'raw_invalid': raw,
+                  'sale_facts': sales_fact, 'return_facts': return_fact, 'latest_rejects': rejects, 'audit': audit}
+        # Every extracted row must have a visible final disposition. Cancelled rows
+        # are excluded from the sale fact and retained in per-run rejection audit.
+        passed = (source_orders >= 50000 and completed == sales_fact and returns == return_fact
+                  and balances and reads_match
+                  and completed + cancelled + returns + raw == sales_fact + return_fact + rejects)
+        return passed, detail
 
 def main() -> int:
-    src = get_engine(SOURCE_DB)
-    dw = get_engine(DW_DB)
-    results: list[dict] = []
+    results = run_tests()
+    for row in results:
+        print(f"{row['status']} {row['name']}: {json.dumps(row['detail'], ensure_ascii=False, default=str)}")
+    return int(any(row['status'] != 'PASS' for row in results))
 
-    def add_case(ma_tc: str, hang_muc: str, mo_ta: str, ky_vong: str, thuc_te: str, passed: bool) -> None:
-        results.append({
-            "ma_test_case": ma_tc,
-            "hang_muc": hang_muc,
-            "mo_ta_kiem_tra": mo_ta,
-            "ket_qua_ky_vong": ky_vong,
-            "ket_qua_thuc_te": thuc_te,
-            "trang_thai": "PASS" if passed else "FAIL",
-        })
-
-    with src.connect() as sconn, dw.connect() as dconn:
-        latest_run = dconn.execute(text("SELECT run_id FROM etl_log ORDER BY log_id DESC LIMIT 1")).scalar()
-
-        # TC01: Quy mô bảng fact >= 100.000 dòng
-        fact_kq_cnt = int(dconn.execute(text("SELECT COUNT(*) FROM fact_ket_qua_hoc_tap")).scalar())
-        add_case(
-            "TC01", "Quy mô dữ liệu",
-            "Bảng fact_ket_qua_hoc_tap có tối thiểu 100.000 dòng",
-            ">= 100,000", f"{fact_kq_cnt:,}",
-            fact_kq_cnt >= 100_000,
-        )
-
-        # TC02: Đối soát số dòng DangKyHocPhan (Nguồn = Fact + Reject)
-        src_dk_cnt = int(sconn.execute(text("SELECT COUNT(*) FROM DangKyHocPhan")).scalar())
-        rej_dk_cnt = int(dconn.execute(
-            text("SELECT COUNT(*) FROM etl_reject WHERE run_id = :r AND bang = 'DangKyHocPhan'"),
-            {"r": latest_run},
-        ).scalar())
-        add_case(
-            "TC02", "Đối soát nguồn - kho",
-            "Số dòng DangKyHocPhan nguồn = fact_ket_qua_hoc_tap + etl_reject",
-            f"{src_dk_cnt:,}", f"{fact_kq_cnt + rej_dk_cnt:,} (Fact={fact_kq_cnt:,}, Reject={rej_dk_cnt:,})",
-            src_dk_cnt == fact_kq_cnt + rej_dk_cnt,
-        )
-
-        # TC03: Đối soát số dòng HoSoTuyenSinh (Nguồn = Fact + Reject)
-        src_hs_cnt = int(sconn.execute(text("SELECT COUNT(*) FROM HoSoTuyenSinh")).scalar())
-        fact_ts_cnt = int(dconn.execute(text("SELECT COUNT(*) FROM fact_tuyen_sinh")).scalar())
-        rej_hs_cnt = int(dconn.execute(
-            text("SELECT COUNT(*) FROM etl_reject WHERE run_id = :r AND bang = 'HoSoTuyenSinh'"),
-            {"r": latest_run},
-        ).scalar())
-        add_case(
-            "TC03", "Đối soát nguồn - kho",
-            "Số dòng HoSoTuyenSinh nguồn = fact_tuyen_sinh + etl_reject",
-            f"{src_hs_cnt:,}", f"{fact_ts_cnt + rej_hs_cnt:,} (Fact={fact_ts_cnt:,}, Reject={rej_hs_cnt:,})",
-            src_hs_cnt == fact_ts_cnt + rej_hs_cnt,
-        )
-
-        # TC04: Đối soát số sinh viên hiện hành
-        src_sv_cnt = int(sconn.execute(text("SELECT COUNT(*) FROM SinhVien")).scalar())
-        dw_sv_cur = int(dconn.execute(
-            text("SELECT COUNT(*) FROM dim_sinh_vien WHERE sinh_vien_key > 0 AND is_current = 1")
-        ).scalar())
-        add_case(
-            "TC04", "Đối soát sinh viên",
-            "Số sinh viên nguồn khớp số bản ghi is_current = 1 trong dim_sinh_vien",
-            f"{src_sv_cnt:,}", f"{dw_sv_cur:,}",
-            src_sv_cnt == dw_sv_cur,
-        )
-
-        # TC05: Không có điểm ngoài thang [0, 10] hoặc NULL trong fact_ket_qua_hoc_tap
-        bad_grade_cnt = int(dconn.execute(text("""
-            SELECT COUNT(*) FROM fact_ket_qua_hoc_tap
-            WHERE diem_qua_trinh IS NULL OR diem_thi IS NULL OR diem_tong_ket IS NULL
-               OR diem_qua_trinh < 0 OR diem_qua_trinh > 10
-               OR diem_thi < 0 OR diem_thi > 10
-               OR diem_tong_ket < 0 OR diem_tong_ket > 10
-        """)).scalar())
-        add_case(
-            "TC05", "Miền giá trị điểm",
-            "Không có điểm NULL hoặc ngoài khoảng [0, 10] trong fact_ket_qua_hoc_tap",
-            "0 dòng lỗi", f"{bad_grade_cnt} dòng lỗi",
-            bad_grade_cnt == 0,
-        )
-
-        # TC06: Công thức điểm tổng kết = ROUND(0.4*QT + 0.6*Thi, 1)
-        wrong_formula_cnt = int(dconn.execute(text("""
-            SELECT COUNT(*) FROM fact_ket_qua_hoc_tap
-            WHERE ABS(diem_tong_ket - ROUND(0.4 * diem_qua_trinh + 0.6 * diem_thi, 1)) > 0.01
-        """)).scalar())
-        add_case(
-            "TC06", "Tính đúng đắn công thức",
-            "Điểm tổng kết khớp công thức ROUND(0.4*QT + 0.6*Thi, 1)",
-            "0 dòng lệch", f"{wrong_formula_cnt} dòng lệch",
-            wrong_formula_cnt == 0,
-        )
-
-        # TC07: Không có cặp (sinh_vien, ma_lhp) bị trùng trong fact_ket_qua_hoc_tap
-        dup_lhp_cnt = int(dconn.execute(text("""
-            SELECT COUNT(*) FROM (
-                SELECT sv.ma_sv, kq.ma_lhp, COUNT(*) AS c
-                FROM fact_ket_qua_hoc_tap kq
-                JOIN dim_sinh_vien sv ON kq.sinh_vien_key = sv.sinh_vien_key
-                GROUP BY sv.ma_sv, kq.ma_lhp
-                HAVING COUNT(*) > 1
-            ) t
-        """)).scalar())
-        add_case(
-            "TC07", "Tính duy nhất (Grain)",
-            "Không có sinh viên đăng ký trùng cùng một lớp học phần trong Fact",
-            "0 cặp trùng", f"{dup_lhp_cnt} cặp trùng",
-            dup_lhp_cnt == 0,
-        )
-
-        # TC08: Toàn vẹn tham chiếu (không có khóa ngoại mồ côi)
-        orphan_cnt = int(dconn.execute(text("""
-            SELECT
-                (SELECT COUNT(*) FROM fact_ket_qua_hoc_tap kq LEFT JOIN dim_sinh_vien d ON kq.sinh_vien_key = d.sinh_vien_key WHERE d.sinh_vien_key IS NULL) +
-                (SELECT COUNT(*) FROM fact_ket_qua_hoc_tap kq LEFT JOIN dim_mon_hoc d ON kq.mon_hoc_key = d.mon_hoc_key WHERE d.mon_hoc_key IS NULL) +
-                (SELECT COUNT(*) FROM fact_ket_qua_hoc_tap kq LEFT JOIN dim_giang_vien d ON kq.giang_vien_key = d.giang_vien_key WHERE d.giang_vien_key IS NULL) +
-                (SELECT COUNT(*) FROM fact_ket_qua_hoc_tap kq LEFT JOIN dim_nganh d ON kq.nganh_key = d.nganh_key WHERE d.nganh_key IS NULL) +
-                (SELECT COUNT(*) FROM fact_ket_qua_hoc_tap kq LEFT JOIN dim_thoi_gian d ON kq.thoi_gian_key = d.thoi_gian_key WHERE d.thoi_gian_key IS NULL)
-        """)).scalar())
-        add_case(
-            "TC08", "Toàn vẹn khóa ngoại",
-            "Không có khóa ngoại mồ côi giữa Fact và các Dimension",
-            "0 dòng mồ côi", f"{orphan_cnt} dòng mồ côi",
-            orphan_cnt == 0,
-        )
-
-        # TC09: Chuẩn hóa giới tính & tỉnh/thành trong dim_sinh_vien
-        valid_provinces = {t[0] for t in ref.TINH_THANH}
-        sv_provinces = {
-            r[0] for r in dconn.execute(text("SELECT DISTINCT tinh_thanh FROM dim_sinh_vien WHERE sinh_vien_key > 0")).fetchall()
-        }
-        sv_genders = {
-            r[0] for r in dconn.execute(text("SELECT DISTINCT gioi_tinh FROM dim_sinh_vien WHERE sinh_vien_key > 0")).fetchall()
-        }
-        invalid_prov = sv_provinces - valid_provinces
-        invalid_gender = sv_genders - {"Nam", "Nữ"}
-        add_case(
-            "TC09", "Chuẩn hóa danh mục",
-            "Giới tính chỉ gồm {Nam, Nữ} và tỉnh/thành thuộc đúng 18 tỉnh/thành chuẩn",
-            "0 giá trị lạ", f"Tỉnh lạ={len(invalid_prov)}, Giới tính lạ={len(invalid_gender)}",
-            len(invalid_prov) == 0 and len(invalid_gender) == 0,
-        )
-
-        # TC10: Kiểm tra tính đúng đắn của SCD2 trên dim_sinh_vien
-        scd2_history_cnt = int(dconn.execute(
-            text("SELECT COUNT(*) FROM dim_sinh_vien WHERE sinh_vien_key > 0 AND is_current = 0")
-        ).scalar())
-        scd2_overlap_cnt = int(dconn.execute(text("""
-            SELECT COUNT(*)
-            FROM dim_sinh_vien d1
-            JOIN dim_sinh_vien d2
-              ON d1.ma_sv = d2.ma_sv
-             AND d1.sinh_vien_key < d2.sinh_vien_key
-             AND d1.ngay_hieu_luc <= d2.ngay_het_han
-             AND d2.ngay_hieu_luc <= d1.ngay_het_han
-            WHERE d1.sinh_vien_key > 0
-        """)).scalar())
-        add_case(
-            "TC10", "Tính đúng của SCD2",
-            "Các phiên bản SCD2 của sinh viên đổi ngành được đóng đúng, không chồng lấn ngày hiệu lực",
-            "Có dòng lịch sử & 0 chồng lấn",
-            f"Dòng lịch sử={scd2_history_cnt}, Chồng lấn={scd2_overlap_cnt}",
-            scd2_history_cnt > 0 and scd2_overlap_cnt == 0,
-        )
-
-    df_res = pd.DataFrame(results)
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    out_file = OUTPUT_DIR / "test_cases_result.csv"
-    df_res.to_csv(out_file, index=False, encoding="utf-8-sig")
-
-    print("\n=== KẾT QUẢ KIỂM THỬ CHẤT LƯỢNG DỮ LIỆU (10 TEST CASES) ===")
-    print(df_res.to_string(index=False))
-    failed = int((df_res["trang_thai"] != "PASS").sum())
-    print(f"\nTổng kết: {len(df_res) - failed}/{len(df_res)} PASS. Đã lưu file: {out_file}")
-    return 1 if failed else 0
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     raise SystemExit(main())
-

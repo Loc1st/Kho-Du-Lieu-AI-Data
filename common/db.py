@@ -38,8 +38,8 @@ DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-SOURCE_DB = os.getenv("SOURCE_DB", "edu_source")
-DW_DB = os.getenv("DW_DB", "edu_dw")
+SOURCE_DB = "phone_source"
+DW_DB = "phone_dw"
 
 
 def get_engine(database: str | None = None) -> Engine:

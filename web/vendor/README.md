@@ -1,0 +1,1 @@
+Chart.js 4.4.1, MIT. Vendored from https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js . Local copy keeps the dashboard available without CDN connectivity. Copyright/license header retained.

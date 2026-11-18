@@ -1,4 +1,4 @@
 ﻿ma_truy_van,mo_ta,thoi_gian_oltp_ms,thoi_gian_dw_star_ms,tang_toc_lan
-Q1_TyLeRotTheoKhoaMonHocKy,"Tỷ lệ đạt/rớt và điểm TB theo Khoa, Môn học, Năm học (trên ~225.000 dòng)",3839.78,2468.35,1.56
-Q2_KetQuaTheoKhoaNganhHocKy,"Điểm trung bình hệ 10, hệ 4 và tỷ lệ đạt theo Khoa, Ngành và Năm học",8244.22,3855.11,2.14
-Q3_KetQuaTheoGiangVienHocViKhoa,"Điểm trung bình và tỷ lệ qua môn theo Khoa, Học vị giảng viên và Loại môn học",3941.68,2457.29,1.6
+Q1_TyLeRotTheoKhoaMonHocKy,"Tỷ lệ đạt/rớt và điểm TB theo Khoa, Môn học, Năm học (trên ~225.000 dòng)",1292.62,625.34,2.07
+Q2_KetQuaTheoKhoaNganhHocKy,"Điểm trung bình hệ 10, hệ 4 và tỷ lệ đạt theo Khoa, Ngành và Năm học",2404.91,2088.32,1.15
+Q3_KetQuaTheoGiangVienHocViKhoa,"Điểm trung bình và tỷ lệ qua môn theo Khoa, Học vị giảng viên và Loại môn học",1681.82,1200.73,1.4

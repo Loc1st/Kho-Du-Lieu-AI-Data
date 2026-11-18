@@ -1,86 +1,64 @@
-# Tài liệu Thiết kế CSDL Nguồn (3NF), Star Schema và Bảng Mapping Nguồn → Kho
+# Mapping nguồn → kho và định nghĩa KPI
 
-Tài liệu này dùng chung cho cả 3 thành viên:
-- **Cao Huy Hoàng**: đối chiếu cấu trúc bảng và quy tắc ETL/SCD2.
-- **Võ Nguyễn Thành Long**: dùng sơ đồ và bảng từ điển dữ liệu dưới đây để vẽ trên **draw.io / MySQL Workbench** và đưa vào chương Thiết kế của báo cáo.
-- **Nguyễn Thanh Tùng**: tra cứu tên cột trong Kho dữ liệu (`edu_dw`) khi viết truy vấn OLAP và dựng Dashboard Power BI.
+Tên bảng/cột chuẩn căn cứ `sql/01_create_source_db.sql`, `sql/02_create_dw.sql`; ERD ở [ARCHITECTURE.md](ARCHITECTURE.md), kiểu dữ liệu ở [DATA_DICTIONARY.md](DATA_DICTIONARY.md).
 
----
+## Dimension
 
-## 1. Sơ đồ ERD hệ thống nguồn `edu_source` (Chuẩn hóa 3NF)
+| Đích | Nguồn | Chuyển đổi / lookup |
+|---|---|---|
+| `dim_thoi_gian` | Lịch ngày bao phủ ngày bán và trả | `thoi_gian_key = YYYYMMDD`, tách năm/quý/tháng |
+| `dim_san_pham` | `phien_ban_san_pham` → `san_pham` → `thuong_hieu` | Một SKU một khóa; phi chuẩn hóa tên, thương hiệu, RAM, bộ nhớ, màu |
+| `dim_cua_hang` | `cua_hang` → `tinh_thanh` + `lich_su_cua_hang` | SCD2 khu vực; duy nhất mã + ngày hiệu lực; một current; khoảng nửa mở |
+| `dim_khach_hang` | `khach_hang` → `tinh_thanh` | Khóa theo mã khách; chuẩn hóa khoảng trắng ở tên/nhãn |
+| `dim_kenh_ban` | `kenh_ban` | Mã kênh duy nhất, giữ tên mô tả |
+| `dim_khuyen_mai` | `khuyen_mai` | Mã khuyến mại duy nhất; không khuyến mại dùng mã NONE; kiểm tra ngày bán trong hiệu lực chương trình ở nguồn, không đưa ngày khuyến mại thành chiều mới |
 
-```mermaid
-erDiagram
-    Khoa ||--o{ Nganh : "quản lý"
-    Khoa ||--o{ GiangVien : "thuộc"
-    Khoa ||--o{ MonHoc : "quản lý"
-    Nganh ||--o{ SinhVien : "theo học"
-    Nganh ||--o{ HoSoTuyenSinh : "đăng ký"
-    PhuongThucXetTuyen ||--o{ HoSoTuyenSinh : "áp dụng"
-    SinhVien o|--o{ HoSoTuyenSinh : "trúng tuyển nhập học"
-    SinhVien ||--o{ LichSuChuyenNganh : "có lịch sử đổi ngành"
-    MonHoc ||--o{ LopHocPhan : "mở lớp"
-    HocKy ||--o{ LopHocPhan : "trong học kỳ"
-    GiangVien ||--o{ LopHocPhan : "giảng dạy"
-    SinhVien ||--o{ DangKyHocPhan : "đăng ký"
-    LopHocPhan ||--o{ DangKyHocPhan : "có danh sách"
-```
+## Fact và kiểm tra nghiệp vụ
 
----
+| Đích | Nguồn | Quy tắc |
+|---|---|---|
+| `fact_ban_hang.ma_chi_tiet`, `ma_don_hang` | `chi_tiet_don_hang` + `don_hang` | Nạp `COMPLETED`, `PARTIALLY_RETURNED`, `RETURNED`; loại `CANCELLED`; mã dòng là khóa nghiệp vụ để chạy lặp |
+| Sáu FK của fact bán | Đầu đơn, SKU, mã khuyến mại | Lookup dimension; cửa hàng theo **ngày đặt** trong khoảng hiệu lực |
+| `so_luong`, `don_gia`, `giam_gia`, `gia_von` | Chi tiết đơn | Số lượng > 0; tiền không âm; giảm giá là tổng dòng, không vượt số lượng × đơn giá; giá vốn là tổng dòng |
+| `doanh_thu` | Số lượng × đơn giá − giảm giá | Tính bằng Decimal, lưu `DECIMAL(18,2)` |
+| `fact_tra_hang.ma_chi_tiet_tra` | `chi_tiet_tra_hang` + `tra_hang` | Mỗi dòng trả một record; tra fact bán gốc |
+| `fact_tra_hang.thoi_gian_key` | `tra_hang.ngay_tra` | Không trước ngày bán; trả lũy kế không vượt số lượng bán |
+| `tien_hoan`, `gia_von_hoan` | Tiền hoàn nguồn, giá vốn bán phân bổ theo lượng trả | Tiền không âm; tổng hoàn không vượt doanh thu dòng; giá vốn hoàn không vượt giá vốn bán; làm tròn HALF_UP 2 chữ số và chặn giá vốn hoàn theo phần giá vốn còn lại |
+| `stg_import` | Nguồn thô | Payload và khóa nguồn gắn `run_id` phục vụ truy vết |
+| `etl_reject` | `raw_import_error` và dòng không hợp lệ | `source_id`, `reason`, payload, `run_id`; lỗi nhập thô không đi vào bảng 3NF có ràng buộc |
+| `etl_log`, `etl_data_quality` | Mỗi lượt ETL | Dòng đọc/nạp/loại, trạng thái, cách xử lý, `run_id` |
 
-## 2. Sơ đồ Kho dữ liệu `edu_dw` (Star Schema với Conformed Dimensions)
+Không sửa tiền sai thành 0 để làm cho kiểm thử PASS. Phải giải thích bằng reject hoặc quy tắc làm sạch xác định. Khóa nghiệp vụ UNIQUE và upsert bảo đảm chạy lặp; lịch sử log/reject được giữ theo từng lượt nên số dòng log có thể tăng dù fact không tăng.
 
-Hai bảng Fact (`fact_ket_qua_hoc_tap`, `fact_tuyen_sinh`) dùng chung 3 chiều chuẩn hóa (**Conformed Dimensions**): `dim_sinh_vien`, `dim_nganh`, `dim_thoi_gian`.
+## Công thức tổng hợp
 
-```mermaid
-erDiagram
-    dim_sinh_vien ||--o{ fact_ket_qua_hoc_tap : "sinh_vien_key (SCD2)"
-    dim_mon_hoc ||--o{ fact_ket_qua_hoc_tap : "mon_hoc_key"
-    dim_giang_vien ||--o{ fact_ket_qua_hoc_tap : "giang_vien_key"
-    dim_nganh ||--o{ fact_ket_qua_hoc_tap : "nganh_key"
-    dim_thoi_gian ||--o{ fact_ket_qua_hoc_tap : "thoi_gian_key"
+Gọi `B` là các dòng bán hợp lệ sau lọc **ngày bán** và các chiều; `R(B)` là mọi dòng trả liên kết với B, kể cả trả ngoài khoảng ngày lọc.
 
-    dim_sinh_vien ||--o{ fact_tuyen_sinh : "sinh_vien_key"
-    dim_nganh ||--o{ fact_tuyen_sinh : "nganh_key"
-    dim_phuong_thuc_xet_tuyen ||--o{ fact_tuyen_sinh : "ptxt_key"
-    dim_thoi_gian ||--o{ fact_tuyen_sinh : "thoi_gian_key"
-```
+| Chỉ số | Công thức |
+|---|---|
+| Doanh thu bán | `SUM(B.so_luong * B.don_gia - B.giam_gia)` |
+| Doanh thu thuần | `SUM(B.doanh_thu) - SUM(R(B).tien_hoan)` |
+| Giá vốn thuần | `SUM(B.gia_von) - SUM(R(B).gia_von_hoan)` |
+| Lợi nhuận gộp | Doanh thu thuần − giá vốn thuần |
+| Biên lợi nhuận | Lợi nhuận gộp / doanh thu thuần |
+| Tỷ lệ trả theo lượng | `SUM(R(B).so_luong_tra) / SUM(B.so_luong)` |
+| AOV | Doanh thu thuần / `COUNT(DISTINCT B.ma_don_hang)` |
 
----
+Dùng `NULLIF(mau_so,0)`; tập rỗng hiển thị không có dữ liệu, không diễn giải tỷ lệ thiếu mẫu số là 0% thành công. Đơn đã trả hết vẫn là đơn bán hợp lệ trong mẫu số AOV; không đếm đơn hủy. Khi lọc SKU, AOV là doanh thu các dòng SKU được chọn trên số đơn chứa các dòng ấy.
 
-## 3. Bảng Mapping Nguồn (`edu_source`) → Kho (`edu_dw`)
+Ví dụ bán 31/12/2026, trả 05/01/2027: dashboard lọc tháng 12/2026 đã trừ khoản hoàn đó. Báo cáo vận hành hoàn tiền tháng 01/2027 lọc ngày trả trên `fact_tra_hang` sẽ ghi nhận khoản này trong tháng 1. Hai báo cáo trả lời hai câu hỏi khác nhau.
 
-### 3.1. Các bảng Dimension
+## Năm câu hỏi OLAP
 
-| Bảng đích (`edu_dw`) | Cột đích | Kiểu dữ liệu | Nguồn (`edu_source`) | Quy tắc biến đổi (Transform) |
-|---|---|---|---|---|
-| `dim_thoi_gian` | `thoi_gian_key` | `INT (PK)` | Sinh từ lịch + `HocKy` | Định dạng `YYYYMMDD` (ví dụ `20220905`) |
-| `dim_thoi_gian` | `ngay`, `thang`, `quy`, `nam` | `DATE`, `TINYINT`, `SMALLINT` | Chuỗi ngày 2019–2027 | Tách ngày, tháng, quý (1–4), năm |
-| `dim_thoi_gian` | `hoc_ky`, `hoc_ky_so`, `nam_hoc` | `VARCHAR`, `TINYINT` | `HocKy` | Tháng 8–1 thuộc HK1, tháng 2–7 thuộc HK2 |
-| `dim_nganh` | `nganh_key` | `INT AUTO_INCREMENT (PK)` | Surrogate key | Khóa thay thế tự tăng |
-| `dim_nganh` | `ma_nganh`, `ten_nganh`, `he_dao_tao` | `VARCHAR` | `Nganh` | Trim, chuẩn hóa chữ hoa/thường cho `ten_nganh` bị lỗi |
-| `dim_nganh` | `ma_khoa`, `ten_khoa` | `VARCHAR` | `Nganh` ⋈ `Khoa` | Phi chuẩn hóa (denormalize) tên khoa vào chiều ngành |
-| `dim_mon_hoc` | `mon_hoc_key` | `INT AUTO_INCREMENT (PK)` | Surrogate key | Khóa thay thế tự tăng |
-| `dim_mon_hoc` | `ma_mon`, `ten_mon`, `so_tin_chi`, `loai_mon`, `ma_khoa`, `ten_khoa` | `VARCHAR`, `TINYINT` | `MonHoc` ⋈ `Khoa` | Phi chuẩn hóa tên khoa quản lý môn học |
-| `dim_giang_vien` | `giang_vien_key` | `INT AUTO_INCREMENT (PK)` | Surrogate key | Khóa thay thế tự tăng |
-| `dim_giang_vien` | `ma_gv`, `ho_ten`, `hoc_vi`, `ma_khoa`, `ten_khoa` | `VARCHAR` | `GiangVien` ⋈ `Khoa` | Chuẩn hóa Title Case `ho_ten`, gộp thông tin khoa |
-| `dim_phuong_thuc_xet_tuyen` | `ptxt_key` | `INT AUTO_INCREMENT (PK)` | Surrogate key | Khóa thay thế tự tăng |
-| `dim_phuong_thuc_xet_tuyen` | `ma_ptxt`, `ten_phuong_thuc`, `thang_diem`, `mo_ta` | `VARCHAR`, `DECIMAL(6,1)` | `PhuongThucXetTuyen` | Giữ nguyên thang điểm gốc (30.0 hoặc 1200.0) |
-| `dim_sinh_vien` **(SCD2)** | `sinh_vien_key` | `INT AUTO_INCREMENT (PK)` | Surrogate key | Khóa thay thế cho từng phiên bản lịch sử (`-1` = Unknown) |
-| `dim_sinh_vien` | `ma_sv`, `ho_ten`, `gioi_tinh`, `nam_sinh`, `tinh_thanh`, `vung_mien` | `VARCHAR`, `SMALLINT` | `SinhVien` | SCD1: chuẩn hóa giới tính (`Nam`/`Nữ`), 18 tỉnh/thành chuẩn, suy ra `vung_mien`, tách `YEAR(ngay_sinh)` |
-| `dim_sinh_vien` | `ma_nganh`, `ten_nganh`, `ma_khoa`, `ten_khoa`, `ma_lop` | `VARCHAR` | `SinhVien` + `LichSuChuyenNganh` | **SCD2**: theo dõi thay đổi ngành và lớp theo thời gian |
-| `dim_sinh_vien` | `ngay_hieu_luc`, `ngay_het_han`, `is_current` | `DATE`, `DATE`, `TINYINT` | `sp_scd2_dim_sinh_vien` | Đóng bản ghi cũ (`ngay_het_han = ngay_chuyen - 1 ngày`, `is_current = 0`), mở bản ghi mới (`9999-12-31`, `is_current = 1`) |
+1. Thương hiệu, dòng máy/SKU nào có sản lượng, doanh thu thuần và lợi nhuận nổi bật? Drill-down thương hiệu → sản phẩm → SKU.
+2. Doanh thu và lượng bán biến động thế nào theo mùa? Roll-up tháng → quý → năm, drill-down ngược lại.
+3. Thương hiệu nào hiệu quả trên từng kênh? Slice/dice thương hiệu × kênh; CUBE mô phỏng bằng các grouping set tương ứng.
+4. Giá bán bình quân và lượng tiêu thụ có liên hệ thế nào ở grain SKU × tháng có bán? Scatter và Pearson; giá bình quân = doanh thu sau giảm giá trước hoàn / lượng bán.
+5. Khu vực/tỉnh/cửa hàng nào hiệu quả? Dùng phiên bản khu vực tại ngày bán, tránh chuyển toàn bộ doanh số cũ sang khu vực hiện tại.
 
-### 3.2. Các bảng Fact
+Phân tích khuyến mại là lát cắt bổ sung và một grain benchmark, không thay thế câu hỏi giá–lượng. Năm grain benchmark là tháng, SKU, cửa hàng, kênh và khuyến mại; tệp mang tiền tố `benchmark_query_`. Năm câu hỏi quản lý xuất tiền tố `olap_business_`; không nhầm hai bộ này.
 
-| Bảng đích (`edu_dw`) | Cột đích | Nguồn (`edu_source`) | Quy tắc biến đổi (Transform & Lookup) |
-|---|---|---|---|
-| `fact_ket_qua_hoc_tap` | `ma_dang_ky`, `ma_lhp` | `DangKyHocPhan` | Degenerate dimension; loại bản ghi trùng `(ma_sv, ma_lhp)` |
-| `fact_ket_qua_hoc_tap` | `sinh_vien_key`, `nganh_key` | Tra cứu `dim_sinh_vien`, `dim_nganh` | Nối theo `ma_sv` và `HocKy.ngay_bat_dau BETWEEN ngay_hieu_luc AND ngay_het_han` (đảm bảo điểm kỳ cũ thuộc ngành cũ!) |
-| `fact_ket_qua_hoc_tap` | `mon_hoc_key`, `giang_vien_key`, `thoi_gian_key` | `LopHocPhan` + `HocKy` | Tra cứu khóa thay thế tương ứng |
-| `fact_ket_qua_hoc_tap` | `diem_qua_trinh`, `diem_thi`, `diem_tong_ket` | `DangKyHocPhan` | Loại dòng NULL hoặc ngoài `[0, 10]`; tính lại `ROUND(0.4*QT + 0.6*Thi, 1)` |
-| `fact_ket_qua_hoc_tap` | `diem_chu`, `diem_he_4`, `ket_qua_dat`, `so_tin_chi` | Quy đổi + `MonHoc.so_tin_chi` | Quy đổi thang chữ (`A`→`F`), hệ 4 (`4.0`→`0.0`), `ket_qua_dat = (diem_tong_ket >= 4.0)` |
-| `fact_tuyen_sinh` | `ma_ho_so`, `nganh_key`, `ptxt_key`, `thoi_gian_key`, `sinh_vien_key` | `HoSoTuyenSinh` | Tra cứu khóa thay thế; nếu chưa nhập học thì `sinh_vien_key = -1` |
-| `fact_tuyen_sinh` | `diem_xet_tuyen`, `diem_quy_doi_30` | `HoSoTuyenSinh` | Loại dòng NULL/ngoài thang; quy đổi về thang 30: `diem_xet_tuyen * 30 / thang_diem` |
-| `fact_tuyen_sinh` | `is_trung_tuyen`, `is_nhap_hoc`, `so_luong_ho_so` | `HoSoTuyenSinh` | Cờ `0/1` phục vụ tính tỷ lệ trúng tuyển và tỷ lệ nhập học |
+Các câu SQL nằm trong `sql/05_olap_queries.sql`; `vw_olap_cube` hỗ trợ tổng hợp nhiều chiều. Scatter plot mô tả liên hệ giữa giá bán trung bình sau giảm giá và số máy bán ở grain SKU × tháng có bán. Nếu tính Pearson r cần nêu số quan sát, grain, loại dữ liệu thiếu và trường hợp phương sai bằng 0. Tương quan không chứng minh khuyến mại gây tăng doanh số: mùa vụ, thương hiệu, lượng tồn, cửa hàng và cơ chế dữ liệu giả lập đều có thể gây nhiễu. Không coi chênh lệch nhóm hoặc đường xu hướng là kết quả kiểm định nhân quả.
 
+
+Nguồn `nhan_vien` kiểm tra đơn có nhân viên thuộc đúng cửa hàng, nhưng không ánh xạ thành chiều thứ bảy. Đơn `PARTIALLY_RETURNED`/`RETURNED` vẫn được nạp; khoản hoàn chỉ trừ qua fact trả, tránh loại cả đơn rồi trừ thêm lần nữa. Nhãn phiếu trả `PARTIAL`/`FULL` không thay thế đối soát lượng và tiền. Sai ràng buộc của giao dịch nguồn hợp lệ (ví dụ khuyến mại ngoài hiệu lực hoặc lịch sử cửa hàng chồng lấn) làm ETL thất bại và rollback; lỗi envelope nhập thô được ghi reject riêng.

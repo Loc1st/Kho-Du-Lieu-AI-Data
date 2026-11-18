@@ -2,7 +2,7 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 echo ===========================================================================
-echo KHO DU LIEU GIAO DUC VKU - KHOI DONG WEB DASHBOARD
+echo PHONE SALES DATA WAREHOUSE - BUSINESS INTELLIGENCE DASHBOARD
 echo Dang mo trinh duyet tai: http://localhost:8050
 echo ===========================================================================
 start "" "http://localhost:8050"

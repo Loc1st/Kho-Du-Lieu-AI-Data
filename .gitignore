@@ -6,6 +6,9 @@ __pycache__/
 
 # Environment & credentials
 .env
+backups/
+data/phone_sales/
+output/phone_sales/
 
 # Large generated data & dumps (giữ lại file mẫu, loại trừ cache lớn nếu cần)
 # Giữ data/*.csv và output/*.csv để người dùng clone về là có dữ liệu chạy ngay

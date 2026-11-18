@@ -1,100 +1,96 @@
-# Kho Dữ Liệu Giáo Dục (Education Data Warehouse) – VKU
+# XÂY DỰNG KHO DỮ LIỆU PHỤC VỤ PHÂN TÍCH HOẠT ĐỘNG BÁN ĐIỆN THOẠI DI ĐỘNG
 
-Đồ án môn **Kho dữ liệu**: *Xây dựng kho dữ liệu giáo dục phục vụ phân tích điểm số, tuyển sinh và kết quả học tập*.
+Đồ án xây dựng kho dữ liệu để phân tích doanh thu, lợi nhuận, lượng điện thoại tiêu thụ, trả hàng và hiệu quả cửa hàng. Hệ thống sử dụng Python, MariaDB, ETL, Star Schema, OLAP và Dashboard Web theo kiến trúc MVC với Chart.js. Dữ liệu mô phỏng phục vụ học tập, không đại diện cho thị trường thực tế.
 
-- **Giảng viên hướng dẫn**: ThS. Mai Lam
-- **Nhóm thực hiện**:
-  1. **Cao Huy Hoàng** – 24ITB050 (Nhóm trưởng – CSDL nguồn, Sinh dữ liệu, Kho dữ liệu, ETL & SCD2)
-  2. **Võ Nguyễn Thành Long** – 24ITB105 (Khảo sát tài liệu, Sơ đồ thiết kế ERD/Class/Star Schema, Từ điển dữ liệu)
-  3. **Nguyễn Thanh Tùng** – 24ITB220 (Kiểm thử chất lượng dữ liệu, Truy vấn OLAP, Dashboard Power BI, Slide & Demo)
+## Mục tiêu phân tích
 
----
+1. Xác định thương hiệu và mẫu điện thoại có doanh thu, lượng bán và lợi nhuận cao nhất.
+2. Phân tích biến động doanh thu, lợi nhuận theo năm, quý và tháng.
+3. So sánh doanh thu giữa thương hiệu và kênh bán hàng.
+4. Khảo sát tương quan giá bán và lượng tiêu thụ theo SKU, thời gian.
+5. Đánh giá khu vực và cửa hàng theo doanh thu, lợi nhuận và tỷ lệ trả hàng.
 
-## 1. Cấu trúc thư mục `Code/`
+## Kiến trúc hệ thống
 
 ```text
-Code/
-├── .env                        # Cấu hình kết nối MariaDB/MySQL (điền mật khẩu vào đây)
-├── .env.example                # Mẫu cấu hình .env
-├── requirements.txt            # Các thư viện Python cần thiết
-├── run_all.py                  # Chạy trọn gói từ đầu đến cuối bằng 1 lệnh
-├── common/
-│   ├── db.py                   # Kết nối SQLAlchemy/PyMySQL + thực thi file .sql
-│   ├── check_connection.py     # Kiểm tra kết nối MariaDB/MySQL
-│   ├── grading.py              # Quy tắc tính điểm tổng kết & quy đổi điểm chữ/thang 4
-│   └── reference.py            # Danh mục chuẩn (Khoa, Ngành, 18 Tỉnh/Thành, 120 Môn học)
-├── sql/
-│   ├── 01_create_source_db.sql # Tạo CSDL nguồn edu_source (OLTP 3NF - 11 bảng)
-│   ├── 02_create_dw.sql        # Tạo Kho dữ liệu edu_dw (Star Schema + Staging + Log)
-│   ├── 03_procedures.sql       # Stored Procedures xử lý SCD2 & nạp 2 bảng Fact
-│   ├── 04_olap_views.sql       # Views mô phỏng CUBE và Views phẳng cho Power BI
-│   └── 05_olap_queries.sql     # 5 câu truy vấn OLAP trả lời 5 câu hỏi quản lý
-├── generator/
-│   └── generate_data.py        # Sinh ~240.000 dòng kết quả học tập + ~8.000 hồ sơ + lỗi chủ đích
-├── etl/
-│   ├── extract.py              # Bước Extract từ edu_source sang staging
-│   ├── transform.py            # Bước Transform làm sạch, chuẩn hóa, tạo phiên bản SCD2
-│   ├── load.py                 # Bước Load vào Dimension và Fact
-│   ├── pipeline.py             # Điều phối ETL và xuất bảng log / chất lượng dữ liệu
-│   └── demo_scd2.py            # Kịch bản minh họa đổi ngành SCD2 & kiểm tra chạy lặp
-├── tests/
-│   └── run_dq_tests.py         # 10 Test Cases đối soát dữ liệu & kiểm tra SCD2
-├── analysis/
-│   └── benchmark.py            # Xuất kết quả 5 câu hỏi OLAP & đo hiệu năng OLTP vs DW
-├── docs/
-│   └── mapping.md              # Sơ đồ ERD, Star Schema và Bảng Mapping Nguồn -> Kho
-├── data/                       # (Tự tạo khi chạy) CSV dữ liệu nguồn + error_manifest.json
-└── output/                     # (Tự tạo khi chạy) CSV log ETL, test cases, OLAP, benchmark
+Sinh dữ liệu bán điện thoại → phone_source (OLTP, 3NF)
+                           → Extract → Staging → Transform → Load
+                           → phone_dw (Star Schema) → OLAP → API → Dashboard
 ```
 
----
+Nguồn `phone_source` có 13 bảng nghiệp vụ chuẩn hóa 3NF cùng lịch sử cửa hàng và nhập lỗi thô (15 bảng); kho `phone_dw` có **6 dimension và 2 fact**. Nguồn có nhân viên, khuyến mại theo mùa với ngày hiệu lực, và trạng thái trả một phần/toàn bộ. Ngày bán thuộc 2024–2026; ngày trả có thể sang 2027. Chiều cửa hàng lưu lịch sử khu vực quản lý bằng SCD Type 2.
 
-## 2. Hướng dẫn chạy cho Cao Huy Hoàng (Chỉ cần 2 bước)
+- Dimension: thời gian, sản phẩm, cửa hàng, khách hàng, kênh bán, khuyến mại.
+- `fact_ban_hang`: một dòng chi tiết đơn hàng hợp lệ; loại đơn hủy.
+- `fact_tra_hang`: một dòng chi tiết trả hàng, tham chiếu dòng bán gốc.
+- ETL lưu `run_id`, nhật ký, thống kê chất lượng và bản ghi bị loại; chạy lặp không nhân đôi giao dịch hoặc mất lịch sử SCD2.
 
-### Bước 1: Bật MariaDB trong XAMPP và điền mật khẩu vào `.env`
-1. Mở **XAMPP Control Panel** → bấm **Start** ở dòng **MySQL** (cổng mặc định `3306`).
-2. Mở file [`.env`](file:///d:/Nam_Hoc/Nam_3/Kho%20du%20lieu/Bai_tap_lon/Code/.env) và điền mật khẩu tài khoản `root` của bạn vào dòng:
-   ```ini
-   DB_PASSWORD=mat_khau_cua_ban
-   ```
+## Chức năng Dashboard
 
-### Bước 2: Chạy toàn bộ hệ thống bằng 1 lệnh
-Mở terminal tại thư mục `d:\Nam_Hoc\Nam_3\Kho du lieu\Bai_tap_lon\Code` và chạy:
+| Tab | Nội dung |
+|---|---|
+| Phân tích kinh doanh | Bộ lọc đa chiều, sáu KPI và sáu biểu đồ từ API/database |
+| Lịch sử cửa hàng | Tìm cửa hàng, xem các phiên bản SCD2, so sánh doanh thu và mô phỏng chuyển khu vực |
+| ETL & Data Quality | Nhật ký, lỗi dữ liệu, 10 bài kiểm thử và benchmark OLTP/DW |
+| SQL Playground | Chạy SELECT có giới hạn trên `phone_source` hoặc `phone_dw` |
+
+## Chạy trên Windows
+
+Mở PowerShell tại thư mục dự án, bật MariaDB/MySQL rồi chạy:
 
 ```powershell
-.venv\Scripts\python.exe run_all.py
+if (-not (Test-Path .venv\Scripts\python.exe)) { py -m venv .venv }
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+# Chỉ tạo .env khi chưa có; không ghi đè mật khẩu hiện tại.
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+.\.venv\Scripts\python.exe -m common.check_connection
+.\.venv\Scripts\python.exe run_all.py
+.\.venv\Scripts\python.exe web_app.py
 ```
 
-Hoặc chạy riêng từng bước khi muốn demo cho giảng viên:
+Mở http://localhost:8050. Điền `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` theo máy trong `.env`. Tên database cố định thành `phone_source` và `phone_dw`; tên nguồn/kho cũ trong `.env` không chuyển truy vấn sang database cũ. Không đưa mật khẩu vào báo cáo hoặc Git.
+
+Lệnh mặc định tái sử dụng dữ liệu nguồn đã có, chạy ETL, SCD2 demo, kiểm thử, OLAP và benchmark. Không tự reset database. Xem [hướng dẫn chạy](HUONG_DAN_CHAY_VA_SU_DUNG_WEB.md) cho cấu hình Windows và IntelliJ IDEA.
+
+Các bước cũng có thể chạy riêng:
+
 ```powershell
-# 1. Kiểm tra kết nối MariaDB
-.venv\Scripts\python.exe -m common.check_connection
-
-# 2. Sinh dữ liệu giả lập (~240.000 dòng) và nạp vào edu_source
-.venv\Scripts\python.exe -m generator.generate_data
-
-# 3. Tạo kho edu_dw và chạy quy trình ETL
-.venv\Scripts\python.exe -m etl.pipeline --init-dw
-
-# 4. Demo đổi ngành sinh viên (SCD2) và chạy lặp ETL
-.venv\Scripts\python.exe -m etl.demo_scd2
-
-# 5. Chạy 10 Test Cases kiểm thử chất lượng dữ liệu
-.venv\Scripts\python.exe -m tests.run_dq_tests
-
-# 6. Chạy 5 câu hỏi OLAP và đo hiệu năng Star Schema vs OLTP 3NF
-.venv\Scripts\python.exe -m analysis.benchmark
+.\.venv\Scripts\python.exe run_all.py init
+.\.venv\Scripts\python.exe run_all.py generate
+.\.venv\Scripts\python.exe run_all.py etl
+.\.venv\Scripts\python.exe run_all.py scd2
+.\.venv\Scripts\python.exe run_all.py tests
+.\.venv\Scripts\python.exe run_all.py olap
+.\.venv\Scripts\python.exe run_all.py benchmark
 ```
 
----
+## Dữ liệu và kiểm thử
 
-## 3. Giải thích nhanh: Power BI là gì và cách dựng Dashboard (cho Tùng & Hoàng)
+Bộ sinh mặc định dùng seed 2026, tạo 60.000 đơn, nhiều SKU, cửa hàng, kênh bán, khách mua lặp và khuyến mại theo mùa. CSV cùng manifest lỗi nằm trong `data/phone_sales/`. Lỗi được chèn có kiểm soát và loại khỏi Fact khi không hợp lệ.
 
-- **Power BI Desktop** là phần mềm trực quan hóa dữ liệu (Business Intelligence) **miễn phí của Microsoft** trên Windows (tải tại Microsoft Store gõ `Power BI Desktop`).
-- Thay vì phải tự lập trình giao diện biểu đồ, bạn chỉ cần kết nối Power BI tới database `edu_dw` (hoặc đọc trực tiếp các file CSV đã xuất sẵn trong thư mục `Code/output/` và các View trong `04_olap_views.sql`), sau đó **kéo – thả** cột để tạo 5 biểu đồ theo đúng mục 4.2 của Đề cương:
-  1. **Biểu đồ cột / Heatmap tỷ lệ rớt theo Khoa & Môn học**: dùng bảng `vw_ket_qua_hoc_tap_chi_tiet` hoặc file `output/olap_q1b_top15_mon_rot_cao.csv`.
-  2. **Biểu đồ cột nhóm (Grouped Bar) Điểm TB theo Ngành × Phương thức xét tuyển**: dùng view `vw_olap_cube_nganh_phuongthuc` hoặc `output/olap_q2_dice_nganh_phuongthuc.csv`.
-  3. **Biểu đồ phân tán (Scatter Plot) Điểm đầu vào vs GPA Học kỳ 1**: dùng view `vw_olap_tuong_quan_dau_vao_hk1` (trục X = `diem_quy_doi_30`, trục Y = `gpa_hk1_he_10`, màu sắc = `ten_phuong_thuc`).
-  4. **Biểu đồ đường (Line Chart) Xu hướng nhập học các ngành qua các năm**: dùng bảng `vw_tuyen_sinh_chi_tiet` hoặc `output/olap_q4_xu_huong_tuyen_sinh.csv`.
-  5. **Biểu đồ cột / Bản đồ Kết quả học tập theo Tỉnh/Thành phố**: dùng `output/olap_q5_ket_qua_theo_tinh_thanh.csv`.
+Mười bài kiểm thử bao gồm đối soát số dòng, loại trùng, giá/lượng, khóa ngoại, doanh thu, lợi nhuận, giới hạn trả, khoảng SCD2, ETL idempotency và đối chiếu OLAP giữa OLTP/DW. Benchmark đo thời gian thực tế và kiểm tra kết quả tương đương; không giả định DW luôn nhanh hơn. Kết quả CSV/JSON, log và ảnh kiểm thử nằm trong `output/phone_sales/`.
 
+## Chỉ số và cách đọc
+
+- Doanh thu thuần = doanh thu bán sau giảm giá − tiền hoàn.
+- Giá vốn thuần = tổng giá vốn bán − giá vốn hàng trả; lợi nhuận gộp = doanh thu thuần − giá vốn thuần.
+- Tỷ lệ trả = tổng số lượng trả / tổng số lượng bán; AOV = doanh thu thuần / số đơn hợp lệ phân biệt.
+- Bộ lọc ngày chọn **ngày bán gốc** (sale cohort), gồm các lượt trả của những dòng bán đó. Báo cáo theo ngày trả dùng thời gian của `fact_tra_hang`, có ý nghĩa khác.
+
+Tiền dùng `DECIMAL(18,2)`/`Decimal`. Không lấy trung bình các tỷ lệ nhóm để tính tỷ lệ tổng.
+
+## Tài liệu và mã nguồn
+
+| Nội dung | Vị trí |
+|---|---|
+| Kiến trúc, ERD, star schema | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Mapping và KPI | [docs/mapping.md](docs/mapping.md) |
+| Từ điển dữ liệu | [docs/DATA_DICTIONARY.md](docs/DATA_DICTIONARY.md) |
+| Demo | [docs/KICH_BAN_DEMO_VA_THUYET_TRINH.md](docs/KICH_BAN_DEMO_VA_THUYET_TRINH.md) |
+| Trạng thái | [PROJECT_STATE.md](PROJECT_STATE.md) |
+| Báo cáo nghiệm thu và bằng chứng thực tế | [PHONE_SALES_IMPLEMENTATION_REPORT.md](PHONE_SALES_IMPLEMENTATION_REPORT.md) |
+| Tạo dữ liệu / ETL / kiểm thử / benchmark | `generator/`, `etl/`, `tests/`, `analysis/` |
+| Web MVC | `mvc/`, `web/`, `web_app.py` |
+| Dữ liệu và kết quả hiện hành | `data/phone_sales/`, `output/phone_sales/` |
+
+Hai database của đề tài này là `phone_source` và `phone_dw`. Hệ thống không phụ thuộc database của đề tài khác. Các kết quả chạy trước được lưu để tham khảo; khi cần đánh giá trạng thái hiện tại, hãy chạy kiểm thử và đọc báo cáo mới trong `output/phone_sales/`.
